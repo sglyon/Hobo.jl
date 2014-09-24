@@ -1,4 +1,4 @@
-module Homeless
+module Hobo
 
 using Docile
 @docstrings

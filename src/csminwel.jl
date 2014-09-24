@@ -14,16 +14,31 @@ written by Chris Sims.
 =#
 
 using Calculus: gradient  # for numerical derivatives
-using Optim: update!, OptimizationTrace
+using Optim: update!, OptimizationTrace, assess_convergence,
+             MultivariateOptimizationResults
 
-macro csmtrace()
+const rc_messages = Dict()
+rc_messages[0] = "Standard Iteration"
+rc_messages[1] = "zero gradient"
+rc_messages[2] = "back and forth on step length never finished"
+rc_messages[3] = "smallest step still improving too slow"
+rc_messages[4] = "back and forth on step length never finished"
+rc_messages[5] = "largest step still improving too fast"
+rc_messages[6] = "smallest step still improving too slow, reversed gradient"
+rc_messages[7] = "warning: possible inaccuracy in H matrix"
+
+macro csminwelltrace()
     quote
         if tracing
             dt = Dict()
             if extended_trace
                 dt["x"] = copy(x)
+                dt["g(x)"] = copy(gr)
+                dt["H(x)"] = copy(H)
+                dt["rc"] = copy(rc)
+                dt["rc_message"] = rc_messages[rc]
             end
-            grnorm = NaN
+            grnorm = norm(gr, Inf)
             update!(tr,
                     iteration,
                     f_x,
@@ -34,7 +49,6 @@ macro csmtrace()
         end
     end
 end
-
 
 @doc* md"""
 
@@ -61,9 +75,7 @@ This is a port of the MATLAB version of that function.
 
 * `ftol::{T<:Real}=1e-14`: Threshold for convergence in terms of change
   in function value across iterations.
-* `nit::Int=100`: Maximum number of iterations
-* `verbose::Bool=false`: Whether or not to print status messages as the
-  algorithm progresses
+* `iterations::Int=100`: Maximum number of iterations
 * `io::IO=STDOUT`: The `IO` object to print messages to. Defaults to
   STDOUT, which is typically the REPL if Julia is run interactively.
 * `kwargs...`: Other keyword arguments to be passed to `f` on each
@@ -74,55 +86,84 @@ This is a port of the MATLAB version of that function.
 
 See the file `examples/csminwel.jl` for an example of usage
 """ ->
-function csminwel(fcn::Function, grad::Function, x0::Vector,
-                  H0::Matrix=0.5.*eye(length(x0)), args...;
-                  ftol::Float64=1e-14, nit::Int=100, verbose::Bool=false,
-                  io::IO=STDOUT, kwargs...)
+function csminwel(fcn::Function,
+                  grad::Function,
+                  x0::Vector,
+                  H0::Matrix=0.5.*eye(length(x0)),
+                  args...;
+                  xtol::Real=1e-32,  # default from Optim.jl
+                  ftol::Float64=1e-14,  # Default from csminwel
+                  grtol::Real=1e-8,  # default from Optim.jl
+                  iterations::Int=1000,
+                  store_trace::Bool = false,
+                  show_trace::Bool = false,
+                  extended_trace::Bool = false,
+                  kwargs...)
+    # unpack dimensions
     nx = size(x0, 1)
     no = size(x0, 2)
     nx = max(nx , no)
-    done = false
-    itct = 0
-    fcount = 0
-    snit = 100
 
-    f0 = fcn(x0, args...; kwargs...)
+    # Count function and gradient calls
+    f_calls = 0
+    g_calls = 0
 
-    if f0 > 1e50
-        throw(ArgumentError("Bad initial parameter."))
+    # Maintain current state in x and previous state in x_previous
+    x, x_previous = copy(x0), copy(x0)
+
+    # start with Initial Hessian
+    H = H0
+
+    # start rc parameter at 0
+    rc = 0
+
+    f_x = fcn(x0, args...; kwargs...)
+    f_calls += 1
+
+    if f_x > 1e50
+        throw(ArgumentError("Bad initial guess. Try again"))
     end
 
-    g, badg = grad(x0)
+    gr, badg = grad(x0)
+    g_calls += 1
 
+    # Count iterations
+    iteration = 0
+
+    # Maintain a trace
+    tr = OptimizationTrace()
+    tracing = show_trace || store_trace || extended_trace
+    @csminwelltrace
+
+    # set objects to their starting values
     retcode3 = 101
-    x = x0
-    f = f0
-    H = H0
     cliff = 0
 
     # set up return variables so they are available outside while loop
-    fh = copy(f0)
+    fh = copy(f_x)
     xh = copy(x0)
     gh = copy(x0)
     retcodeh = 1000
 
-    while !done
-        verbose && println(io, "-----------------")
-        verbose && println(io, "-----------------")
-        verbose && println(io, "f at the beginning of new iteration: $f")
-        #-----------Comment out this line if the x vector is long-------------
-        verbose && println(io, "x = $x")
+    # Assess multiple types of convergence
+    x_converged, f_converged, gr_converged = false, false, false
 
-        itct += 1
-        f1, x1, fc, retcode1 = csminit(fcn, x, f, g, badg, H, args...;
-                                       verbose=verbose, io=io, kwargs...)
-        fcount += fc
+    # Iterate until convergence or exhaustion
+    converged = false
+    while !converged && iteration < iterations
+        # Augment the iteration counter
+        iteration += 1
+
+        f1, x1, fc, retcode1 = csminit(fcn, x, f_x, gr, badg, H, args...;
+                                       kwargs...)
+        f_calls += fc
 
         if retcode1 != 1
             if retcode1 == 2 || retcode1 == 4
                 wall1, badg1 = true, true
             else
                 g1, badg1 = grad(x1)
+                g_calls += 1
                 wall1 = badg1
             end
 
@@ -132,50 +173,56 @@ function csminwel(fcn::Function, grad::Function, x0::Vector,
                 # 1D
 
                 Hcliff = H + diagm(diag(H).*rand(nx))
-                verbose && println(io, "Cliff.  Perturbing search direction.")
-                f2, x2, fc, retcode2 = csminit(fcn, x, f, g, badg, Hcliff,
-                                               args...; verbose=verbose, io=io,
-                                               kwargs...)
-                fcount = fcount+fc; # put by Jinill
-                if f2 < f
+                # println(io, "Cliff.  Perturbing search direction.")
+                f2, x2, fc, retcode2 = csminit(fcn, x, f_x, gr, badg, Hcliff,
+                                               args...; kwargs...)
+                f_calls += fc
+
+                if f2 < f_x
                     if retcode2==2 || retcode2==4
                         wall2 = 1; badg2 = 1
                     else
                         g2, badg2 = grad(x2)
+                        g_calls += 1
                         wall2 = badg2
                         badg2
-
                     end
+
                     if wall2
-                        verbose && println(io, "Cliff again.  Try traversing")
+                        # println(io, "Cliff again.  Try traversing")
+
                         if norm(x2-x1) < 1e-13
-                            f3 = f; x3 = x; badg3 = 1; retcode3 = 101
+                            f3 = f_x
+                            x3 = x
+                            badg3 = 1
+                            retcode3 = 101
                         else
                             gcliff = ( (f2-f1) / ((norm(x2-x1))^2) )*(x2-x1)
                             if (size(x0 , 2)>1)
                                 gcliff = gcliff'
                             end
-                            f3, x3, fc, retcode3 = csminit(fcn, x, f, gcliff,
+                            f3, x3, fc, retcode3 = csminit(fcn, x, f_x, gcliff,
                                                            0, eye(nx),
-                                                           args...;
-                                                           verbose=verbose,
-                                                           io=io, kwargs...)
-                            fcount = fcount+fc
+                                                           args...; kwargs...)
+                            f_calls += fc
+
                             if retcode3==2 || retcode3==4
-                                wall3 = 1; badg3 = 1
+                                wall3 = 1
+                                badg3 = 1
                             else
                                 g3, badg3 = grad(x3)
+                                g_calls += 1
                                 wall3 = badg3
                             end
                         end
                     else
-                        f3 = f
+                        f3 = f_x
                         x3 = x
                         badg3 = true
                         retcode3 = 101
                     end
                 else
-                    f3 = f
+                    f3 = f_x
                     x3 = x
                     badg3 = true
                     retcode3 = 101
@@ -183,31 +230,31 @@ function csminwel(fcn::Function, grad::Function, x0::Vector,
             else
                 # normal iteration, no walls, or else 1D, or else we're
                 # finished here.
-                f2, f3 = f, f
+                f2, f3 = f_x, f_x
                 badg2, badg3 = true, true
                 retcode2, retcode3 = 101, 101
             end
         else
-            f1, f2, f3 = f, f, f
+            f1, f2, f3 = f_x, f_x, f_x
             retcode2, retcode3 = retcode1, retcode1
         end
 
         # how to pick gh and xh
-        if f3 < f - ftol && badg3==0
+        if f3 < f_x - ftol && badg3==0
             ih = 3
             fh = f3
             xh = x3
             gh = g3
             badgh = badg3
             retcodeh = retcode3
-        elseif f2 < f - ftol && badg2==0
+        elseif f2 < f_x - ftol && badg2==0
             ih = 2
             fh = f2
             xh = x2
             gh = g2
             badgh = badg2
             retcodeh = retcode2
-        elseif f1 < f - ftol && badg1==0
+        elseif f1 < f_x - ftol && badg1==0
             ih = 1
             fh = f1
             xh = x1
@@ -216,7 +263,8 @@ function csminwel(fcn::Function, grad::Function, x0::Vector,
             retcodeh = retcode1
         else
             fh, ih = findmin([f1 , f2 , f3])
-            verbose && println(io, "ih = $ih")
+            # println(io, "ih = $ih")
+
             if ih == 1
                 xh = x1
                 retcodeh = retcode1
@@ -236,50 +284,64 @@ function csminwel(fcn::Function, grad::Function, x0::Vector,
 
             if nogh
                 gh, badgh = grad(xh)
+                g_calls += 1
             end
+
             badgh = true
         end
 
-        stuck = (abs(fh-f) < ftol)
+        stuck = (abs(fh-f_x) < ftol)
         if !badg && !badgh && !stuck
-            H = bfgsi(H , gh-g , xh-x)
+            H = bfgsi(H , gh-gr , xh-x)
         end
-        verbose && println(io, "----")
-        verbose && println(io, "Improvement on iteration $itct = $(f-fh)")
 
-        if itct > nit
-            verbose && println(io, "iteration count termination")
-            done = true
-        elseif stuck
-            verbose && println(io, "improvement < ftol termination")
-            done = true
+        if stuck
+            error("improvement < ftol -- terminating")
         end
 
         rc = retcodeh
-        if rc == 1
-            verbose && println(io, "zero gradient")
-        elseif rc == 6
-            verbose && println(io, "smallest step still improving too slow,",
-                                    " reversed gradient")
-        elseif rc == 5
-            verbose && println(io, "largest step still improving too fast")
-        elseif rc == 4 || rc==2
-            verbose && println(io, "back and forth on step length never",
-                                   "finished")
-        elseif rc == 3
-            verbose && println(io, "smallest step still improving too slow")
-        elseif rc == 7
-            verbose && println(io, "warning: possible inaccuracy in H matrix")
-        end
+
+        # maintain record of previous x
+        copy!(x_previous, x)
 
         # update before next iteration
-        f = fh
+        f_x_previous, f_x = f_x, fh
         x = xh
-        g = gh
+        gr = gh
         badg = badgh
+
+        # Check convergence
+        x_converged,
+        f_converged,
+        gr_converged,
+        converged = assess_convergence(x,
+                                       x_previous,
+                                       f_x,
+                                       f_x_previous,
+                                       gr,
+                                       xtol,
+                                       ftol,
+                                       grtol)
+
+        @csminwelltrace
+
     end
 
-    return fh, xh, gh, H, itct, fcount, retcodeh
+    return MultivariateOptimizationResults("csminwel",
+                                           x0,
+                                           x,
+                                           float64(f_x),
+                                           iteration,
+                                           iteration==iterations,
+                                           x_converged,
+                                           xtol,
+                                           f_converged,
+                                           ftol,
+                                           gr_converged,
+                                           grtol,
+                                           tr,
+                                           f_calls,
+                                           g_calls)
 end
 
 @doc md"""
@@ -288,26 +350,34 @@ approximate the gradient numerically. This is convenient for cases where
 you cannot supply an analytical derivative, but it is not as robust as
 using the true derivative.
 """ ->
-function csminwel(fcn::Function, x0::Vector, H0::Matrix=0.5.*eye(length(x0)),
-                  args...; ftol::Float64=1e-14, nit::Int=100,
-                  verbose::Bool=false, io::IO=STDOUT, kwargs...)
-    grad(x) = numgrad(fcn, x, args...; kwargs...)
-    csminwel(fcn, grad, x0, H0, args...; ftol=ftol, nit=nit, verbose=verbose,
-             io=io, kwargs...)
+function csminwel(fcn::Function, x0::Vector,
+                  H0::Matrix=0.5.*eye(length(x0)), args...;
+                  xtol::Real=1e-32,  # default from Optim.jl
+                  ftol::Float64=1e-14,  # Default from csminwel
+                  grtol::Real=1e-8,  # default from Optim.jl
+                  iterations::Int=1000,
+                  store_trace::Bool = false,
+                  show_trace::Bool = false,
+                  extended_trace::Bool = false,
+                  kwargs...)
+    grad(x) = csminwell_grad(fcn, x, args...; kwargs...)
+    csminwel(fcn, grad, x0, H0, args...;
+             xtol=xtol, ftol=ftol, grtol=grtol, iterations=iterations,
+             store_trace=store_trace, show_trace=show_trace,
+             extended_trace=extended_trace, kwargs...)
 end
 
 
-
-function numgrad(fcn, x, args...; kwargs...)
-    g = gradient(a -> fcn(a, args...; kwargs...), x)
-    bads = abs(g) .>= 1e15
-    g[bads] = 0.0
-    return g, any(bads)
+function csminwell_grad(fcn, x, args...; kwargs...)
+    f(a) = fcn(a, args...; kwargs...)
+    gr = gradient(f, x)
+    bad_grads = abs(gr) .>= 1e15
+    gr[bad_grads] = 0.0
+    return gr, any(bad_grads)
 end
 
-# SL: This function worked for my example (2014-09-23 09:08:52)
-function csminit(fcn, x0, f0, g0, badg, H0, args...;
-                 verbose::Bool=false, io::IO=STDOUT, kwargs...)
+# SL: This function worked for rosen example (2014-09-23 09:08:52)
+function csminit(fcn, x0, f0, g0, badg, H0, args...; kwargs...)
     angle = .005
 
     #(0<THETA<.5) THETA near .5 makes long line searches, possibly fewer
@@ -316,13 +386,13 @@ function csminit(fcn, x0, f0, g0, badg, H0, args...;
     fchange = 1000
     minlamb = 1e-9
     mindfac = .01
-    fcount = 0
+    f_calls = 0
     lambda = 1.0
     xhat = x0
     f = f0
     fhat = f0
-    g = g0
-    gnorm = norm(g)
+    gr = g0
+    gnorm = norm(gr)
 
     if gnorm < 1e-12 && !badg
         # gradient convergence
@@ -332,11 +402,11 @@ function csminit(fcn, x0, f0, g0, badg, H0, args...;
         # with badg true, we don't try to match rate of improvement to
         # directional derivative.  We're satisfied just to get some
         # improvement in f.
-        dx = vec(-H0*g)
+        dx = vec(-H0*gr)
         dxnorm = norm(dx)
 
         if dxnorm > 1e12
-            verbose && println(io, "Near singular H problem.")
+            # println(io, "Near singular H problem.")
             dx = dx * fchange / dxnorm
         end
 
@@ -347,14 +417,14 @@ function csminit(fcn, x0, f0, g0, badg, H0, args...;
             a = -dfhat / (gnorm*dxnorm)
 
             if a < angle
-                dx -= (angle*dxnorm/gnorm + dfhat/(gnorm*gnorm)) * g
+                dx -= (angle*dxnorm/gnorm + dfhat/(gnorm*gnorm)) * gr
                 dx *= dxnorm/norm(dx)
-                dfhat = dot(dx, g)
-                verbose && println(io, "Correct for low angle $a")
+                dfhat = dot(dx, gr)
+                # println(io, "Correct for low angle $a")
             end
         end
 
-        verbose && println(io, "Predicted Improvement: $(-dfhat/2)")
+        # println(io, "Predicted Improvement: $(-dfhat/2)")
 
         # Have OK dx, now adjust length of step (lambda) until min and
         # max improvement rate criteria are met.
@@ -375,7 +445,7 @@ function csminit(fcn, x0, f0, g0, badg, H0, args...;
             end
 
             f = fcn(dxtest, args...; kwargs...)
-            verbose && println(io, "lambda = $lambda; f = $f")
+            # println(io, "lambda = $lambda; f = $f")
 
             if f < fhat
                 fhat = f
@@ -383,7 +453,7 @@ function csminit(fcn, x0, f0, g0, badg, H0, args...;
                 lambdahat = lambda
             end
 
-            fcount += 1
+            f_calls += 1
             shrink_signal = (!badg &&
                              (f0-f < maximum([-theta*dfhat*lambda 0]))) ||
                             (badg && (f0-f) < 0)
@@ -468,12 +538,12 @@ function csminit(fcn, x0, f0, g0, badg, H0, args...;
         end
     end
 
-    verbose && println(io, "Norm of dx $dxnorm")
-    return fhat, xhat, fcount, retcode
+    # println(io, "Norm of dx $dxnorm")
+    return fhat, xhat, f_calls, retcode
 end
 
 
-function bfgsi(H0, dg, dx; verbose::Bool=false, io::IO=STDOUT)
+function bfgsi(H0, dg, dx)
     # H = bfgsi(H0,dg,dx)
     # dg is previous change in gradient; dx is previous change in x;
     # 6/8/93 version that updates inverse hessian instead of hessian
@@ -496,13 +566,15 @@ function bfgsi(H0, dg, dx; verbose::Bool=false, io::IO=STDOUT)
         #     be treating it is a scalar. That's why I have .* after it not *
         H = H0 + (1+(dg'*Hdg)/dgdx).*(dx*dx')/dgdx - (dx*Hdg'+Hdg*dx')/dgdx
     else
-        verbose && println(io, "bfgs update failed")
-        verbose && println(io, "|dg| = $(norm(dg)), |dx| = $(norm(dx))")
-        verbose && println(io, "dg'dx = $dgdx")
-        verbose && println(io, "|H*dg| = $(norm(Hdg))")
+        # gradient is super small so don't worry updating right now
+        if norm(dg) < 1e-7
+            return H0
+        end
+        warn("bfgs update failed")
+        println("|dg| = $(norm(dg)), |dx| = $(norm(dx))")
+        println("dg'dx = $dgdx")
+        println("|H*dg| = $(norm(Hdg))")
         H = H0
     end
     return H
 end
-
-

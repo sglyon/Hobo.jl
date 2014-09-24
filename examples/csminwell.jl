@@ -1,8 +1,8 @@
-using Homeless: csminwel
+using Hobo: csminwel
 
 # Example usage:
 function rosenbrock(x::Vector)
-    (1-x[1])^2.0 +105*(x[2]-x[1]^2.0)^4.0
+    (1-x[1])^2.0 + 105*(x[2]-x[1]^2.0)^4.0
 end
 
 # this is the actual gradient of the Rosenbrock function
@@ -14,8 +14,8 @@ function rosenbrock_grad(x::Array)
     return dr, badg
 end
 
-
 # A really bad guess
 x_init = [10.0, -9.0]
 
-fh, xh, gh, H, itct, fcount, retcodeh = csminwel(rosenbrock, rosenbrock_grad, [10.0, -9.0])
+res_real_grad  = csminwel(rosenbrock, rosenbrock_grad, [10.0, -9.0])
+res_numeric_grad  = csminwel(rosenbrock, [10.0, -9.0])

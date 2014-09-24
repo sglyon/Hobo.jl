@@ -1,4 +1,4 @@
-The Homeless.jl package is licensed under the Simplified "2-clause" BSD License:
+The Hobo.jl package is licensed under the Simplified "2-clause" BSD License:
 
 > Copyright (c) 2014: Spencer Lyon.
 >
