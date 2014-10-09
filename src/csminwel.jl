@@ -13,7 +13,7 @@ written by Chris Sims.
 
 =#
 
-using Calculus: gradient  # for numerical derivatives
+import Calculus  # for numerical derivatives
 using Optim: update!, OptimizationTrace, assess_convergence,
              MultivariateOptimizationResults
 
@@ -89,7 +89,7 @@ See the file `examples/csminwel.jl` for an example of usage
 function csminwel(fcn::Function,
                   grad::Function,
                   x0::Vector,
-                  H0::Matrix=0.5.*eye(length(x0)),
+                  H0::Matrix=1e-5.*eye(length(x0)),
                   args...;
                   xtol::Real=1e-32,  # default from Optim.jl
                   ftol::Float64=1e-14,  # Default from csminwel
@@ -99,10 +99,13 @@ function csminwel(fcn::Function,
                   show_trace::Bool = false,
                   extended_trace::Bool = false,
                   kwargs...)
+
+    if show_trace
+        @printf "Iter     Function value   Gradient norm \n"
+    end
+
     # unpack dimensions
     nx = size(x0, 1)
-    no = size(x0, 2)
-    nx = max(nx , no)
 
     # Count function and gradient calls
     f_calls = 0
@@ -137,7 +140,6 @@ function csminwel(fcn::Function,
 
     # set objects to their starting values
     retcode3 = 101
-    cliff = 0
 
     # set up return variables so they are available outside while loop
     fh = copy(f_x)
@@ -173,14 +175,14 @@ function csminwel(fcn::Function,
                 # 1D
 
                 Hcliff = H + diagm(diag(H).*rand(nx))
-                # println(io, "Cliff.  Perturbing search direction.")
+                # println("Cliff.  Perturbing search direction.")
                 f2, x2, fc, retcode2 = csminit(fcn, x, f_x, gr, badg, Hcliff,
                                                args...; kwargs...)
                 f_calls += fc
 
                 if f2 < f_x
                     if retcode2==2 || retcode2==4
-                        wall2 = 1; badg2 = 1
+                        wall2 = true; badg2 = true
                     else
                         g2, badg2 = grad(x2)
                         g_calls += 1
@@ -189,12 +191,12 @@ function csminwel(fcn::Function,
                     end
 
                     if wall2
-                        # println(io, "Cliff again.  Try traversing")
+                        # println("Cliff again.  Try traversing")
 
                         if norm(x2-x1) < 1e-13
                             f3 = f_x
                             x3 = x
-                            badg3 = 1
+                            badg3 = true
                             retcode3 = 101
                         else
                             gcliff = ( (f2-f1) / ((norm(x2-x1))^2) )*(x2-x1)
@@ -202,13 +204,13 @@ function csminwel(fcn::Function,
                                 gcliff = gcliff'
                             end
                             f3, x3, fc, retcode3 = csminit(fcn, x, f_x, gcliff,
-                                                           0, eye(nx),
+                                                           false, eye(nx),
                                                            args...; kwargs...)
                             f_calls += fc
 
                             if retcode3==2 || retcode3==4
-                                wall3 = 1
-                                badg3 = 1
+                                wall3 = true
+                                badg3 = true
                             else
                                 g3, badg3 = grad(x3)
                                 g_calls += 1
@@ -263,7 +265,6 @@ function csminwel(fcn::Function,
             retcodeh = retcode1
         else
             fh, ih = findmin([f1 , f2 , f3])
-            # println(io, "ih = $ih")
 
             if ih == 1
                 xh = x1
@@ -341,7 +342,7 @@ function csminwel(fcn::Function,
                                            grtol,
                                            tr,
                                            f_calls,
-                                           g_calls)
+                                           g_calls), H  # also return H
 end
 
 @doc md"""
@@ -360,7 +361,7 @@ function csminwel(fcn::Function, x0::Vector,
                   show_trace::Bool = false,
                   extended_trace::Bool = false,
                   kwargs...)
-    grad(x) = csminwell_grad(fcn, x, args...; kwargs...)
+    grad{T<:Number}(x::Array{T}) = csminwell_grad(fcn, x, args...; kwargs...)
     csminwel(fcn, grad, x0, H0, args...;
              xtol=xtol, ftol=ftol, grtol=grtol, iterations=iterations,
              store_trace=store_trace, show_trace=show_trace,
@@ -370,7 +371,7 @@ end
 
 function csminwell_grad(fcn, x, args...; kwargs...)
     f(a) = fcn(a, args...; kwargs...)
-    gr = gradient(f, x)
+    gr = Calculus.gradient(f, x)
     bad_grads = abs(gr) .>= 1e15
     gr[bad_grads] = 0.0
     return gr, any(bad_grads)
@@ -406,7 +407,7 @@ function csminit(fcn, x0, f0, g0, badg, H0, args...; kwargs...)
         dxnorm = norm(dx)
 
         if dxnorm > 1e12
-            # println(io, "Near singular H problem.")
+            # println("Near singular H problem.")
             dx = dx * fchange / dxnorm
         end
 
@@ -420,11 +421,11 @@ function csminit(fcn, x0, f0, g0, badg, H0, args...; kwargs...)
                 dx -= (angle*dxnorm/gnorm + dfhat/(gnorm*gnorm)) * gr
                 dx *= dxnorm/norm(dx)
                 dfhat = dot(dx, gr)
-                # println(io, "Correct for low angle $a")
+                # println("Correct for low angle $a")
             end
         end
 
-        # println(io, "Predicted Improvement: $(-dfhat/2)")
+        # println("Predicted Improvement: $(-dfhat/2)")
 
         # Have OK dx, now adjust length of step (lambda) until min and
         # max improvement rate criteria are met.
@@ -445,7 +446,7 @@ function csminit(fcn, x0, f0, g0, badg, H0, args...; kwargs...)
             end
 
             f = fcn(dxtest, args...; kwargs...)
-            # println(io, "lambda = $lambda; f = $f")
+            # println("lambda = $lambda; f = $f")
 
             if f < fhat
                 fhat = f
@@ -538,7 +539,7 @@ function csminit(fcn, x0, f0, g0, badg, H0, args...; kwargs...)
         end
     end
 
-    # println(io, "Norm of dx $dxnorm")
+    # println("Norm of dx $dxnorm")
     return fhat, xhat, f_calls, retcode
 end
 
@@ -564,7 +565,7 @@ function bfgsi(H0, dg, dx)
     if abs(dgdx) > 1e-12
         # SL: (1+(dg'*Hdg)/dgdx) this is a (1, 1) 2d array, but we should
         #     be treating it is a scalar. That's why I have .* after it not *
-        H = H0 + (1+(dg'*Hdg)/dgdx).*(dx*dx')/dgdx - (dx*Hdg'+Hdg*dx')/dgdx
+        H = H0 + (dgdx+(dg'*Hdg)).*(dx*dx')/(dgdx^2) - (Hdg*dx'+dx*Hdg')/dgdx
     else
         # gradient is super small so don't worry updating right now
         if norm(dg) < 1e-7
