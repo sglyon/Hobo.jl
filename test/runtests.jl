@@ -1,5 +1,5 @@
-using Homeless
+using Hobo
 using Base.Test
 
 # write your own tests here
-@test 1 == 1
+include("running_stats.jl")
