@@ -4,7 +4,7 @@ deviation, skewness, and kurtosis for a data set. Follows the algorithm
 outlined [here](http://www.johndcook.com/skewness_kurtosis.html)
 """
 
-type RunningStats{T <: Number}
+type RunningMoments{T <: Number}
     M1::T
     M2::T
     M3::T
@@ -12,23 +12,23 @@ type RunningStats{T <: Number}
     n::Int
 end
 
-function RunningStats()
-    return RunningStats(0.0, 0.0, 0.0, 0.0, 0)
+function RunningMoments()
+    return RunningMoments(0.0, 0.0, 0.0, 0.0, 0)
 end
 
-function RunningStats(x::Number)
-    rs = RunningStats()
+function RunningMoments(x::Number)
+    rs = RunningMoments()
     push!(rs, x)
     return rs
 end
 
-function RunningStats(x::Vector)
-    rs = RunningStats()
+function RunningMoments(x::Vector)
+    rs = RunningMoments()
     push!(rs, x)
     return rs
 end
 
-function push!(rs::RunningStats, x::Number)
+function push!(rs::RunningMoments, x::Number)
     n1 = rs.n
     rs.n += 1
 
@@ -44,21 +44,21 @@ function push!(rs::RunningStats, x::Number)
     nothing
 end
 
-function push!(rs::RunningStats, x::Vector)
+function push!(rs::RunningMoments, x::Vector)
     for a in x
         push!(rs, a)
     end
     nothing
 end
 
-mean(rs::RunningStats) = rs.M1
-var(rs::RunningStats) = rs.M2/(rs.n - 1.0)
-std(rs::RunningStats) = sqrt(var(rs))
-skewness(rs::RunningStats) = sqrt(rs.n) * rs.M3 / rs.M2^(1.5)
-kurtosis(rs::RunningStats) = rs.n*rs.M4 / (rs.M2*rs.M2) - 3.0
+mean(rs::RunningMoments) = rs.M1
+var(rs::RunningMoments) = rs.M2/(rs.n - 1.0)
+std(rs::RunningMoments) = sqrt(var(rs))
+skewness(rs::RunningMoments) = sqrt(rs.n) * rs.M3 / rs.M2^(1.5)
+kurtosis(rs::RunningMoments) = rs.n*rs.M4 / (rs.M2*rs.M2) - 3.0
 
-function +(a::RunningStats, b::RunningStats)
-    rs = RunningStats()
+function +(a::RunningMoments, b::RunningMoments)
+    rs = RunningMoments()
     rs.n = a.n + b.n
 
     delta = b.M1 - a.M1

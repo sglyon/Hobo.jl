@@ -7,9 +7,9 @@ using Docile
 import Base: +, mean, std, var, push!
 import StatsBase: mean, std, var, skewness, kurtosis
 
-export csminwel, RunningStats
+export csminwel, RunningMoments
 
 include("csminwel.jl")
-include("running_stats.jl")
+include("running_moments.jl")
 
 end # module
