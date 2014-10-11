@@ -45,8 +45,9 @@ function push!(rs::RunningMoments, x::Number)
 end
 
 function push!(rs::RunningMoments, x::Vector)
-    for a in x
-        push!(rs, a)
+    n = size(x, 1)
+    for i=1:n
+        @inbounds push!(rs, x[i])
     end
     nothing
 end
