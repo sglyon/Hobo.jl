@@ -81,3 +81,6 @@ function +(a::RunningMoments, b::RunningMoments)
 
     return rs
 end
+
+
+copy(rm::RunningMoments) = RunningMoments() + rm
