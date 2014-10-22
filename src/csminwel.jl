@@ -50,6 +50,7 @@ macro csminwelltrace()
     end
 end
 
+#=
 @doc* md"""
 
 This routine implements Chris Sims' `csminwel` algorithm found
@@ -86,6 +87,7 @@ This is a port of the MATLAB version of that function.
 
 See the file `examples/csminwel.jl` for an example of usage
 """ ->
+=#
 function csminwel(fcn::Function,
                   grad::Function,
                   x0::Vector,
@@ -345,12 +347,14 @@ function csminwel(fcn::Function,
                                            g_calls), H  # also return H
 end
 
+#=
 @doc md"""
 Version of `csminwel` that will use finite differencing methods to
 approximate the gradient numerically. This is convenient for cases where
 you cannot supply an analytical derivative, but it is not as robust as
 using the true derivative.
 """ ->
+=#
 function csminwel(fcn::Function, x0::Vector,
                   H0::Matrix=0.5.*eye(length(x0)), args...;
                   xtol::Real=1e-32,  # default from Optim.jl

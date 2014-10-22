@@ -1,7 +1,7 @@
 module Hobo
 
-using Docile
-@docstrings
+# using Docile
+# @docstrings
 
 # TODO: not sure if I should grab first 2 moments from Base or StatsBase
 import Base: +, mean, std, var, push!, copy
