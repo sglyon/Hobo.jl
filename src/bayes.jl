@@ -4,6 +4,28 @@ using Distributions
 
 export hpd_cs
 
+#=
+
+TODO: need to write a bisect function for this to work
+
+Also need to have using QuantEcon somewhere
+
+function naive_hpd_cs_ecdf(e::ECDF, a=0.95)
+    b = 1 - a
+    b2 = 1 - b/2
+    b1 = b/2
+
+    lb = minimum(e.observations)
+    ub = maximum(e.observations)
+
+    x1 = bisect(x->ecdf(e, x) - b1, lb, ub)
+    x2 = bisect(x->ecdf(e, x) - b2, lb, ub)
+    (x1, x2)
+end
+
+=#
+
+
 # highest posterior density credible set
 function hpd_cs(d::Distribution, α::Real=0.95, N::Int=1500)
     m = mode(d)
