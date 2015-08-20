@@ -56,7 +56,10 @@ only with not-s.c. z; eu=[-2,-2] for coincident zeros.
 =#
 
 module GenSys
-include("ordered_qz.jl")
+
+if VERSION <= v"0.4-"
+    include("ordered_qz.jl")
+end
 
 export gensys
 
