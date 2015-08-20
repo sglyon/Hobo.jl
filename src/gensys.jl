@@ -91,7 +91,7 @@ end
 
 # method if no div is given
 function gensys(Γ0, Γ1, c, ψ, π)
-    F = schurfact(Γ0, Γ1)
+    F = schurfact(complex(Γ0), complex(Γ1))
     div = new_div(F)
     gensys(F, c, ψ, π, div)
 end
@@ -99,7 +99,7 @@ end
 
 # method if all arguments are given
 function gensys(Γ0, Γ1, c, ψ, π, div)
-    F = schurfact(Γ0, Γ1)
+    F = schurfact(complex(Γ0), complex(Γ1))
     gensys(F, c, ψ, π, div)
 end
 
